@@ -1,0 +1,1057 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Train Noise Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #1a1a2e; color: #eee;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+
+  #header {
+    padding: 10px 20px;
+    background: #16213e;
+    border-bottom: 2px solid #e94560;
+    display: flex; align-items: center; gap: 12px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+  }
+  #header-title { font-size: 1rem; font-weight: 600; color: #fff; white-space: nowrap; }
+
+  #search-form { display: flex; gap: 8px; flex: 1; min-width: 260px; position: relative; }
+  #input-wrap { flex: 1; min-width: 0; position: relative; }
+  #address-input {
+    width: 100%; min-width: 0;
+    padding: 7px 12px;
+    border-radius: 6px; border: 1px solid #444;
+    background: #0f3460; color: #fff;
+    font-size: 0.88rem; outline: none;
+  }
+  #address-input:focus { border-color: #e94560; box-shadow: 0 0 0 2px rgba(233,69,96,0.2); }
+  #address-input::placeholder { color: #888; }
+
+  #suggestions {
+    display: none; position: absolute;
+    top: calc(100% + 4px); left: 0; right: 0;
+    background: #16213e; border: 1px solid #444;
+    border-radius: 8px; overflow: hidden;
+    z-index: 10000; max-height: 320px; overflow-y: auto;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  #suggestions.active { display: block; }
+  .suggestion {
+    padding: 9px 13px; cursor: pointer;
+    font-size: 0.83rem; color: #ddd;
+    border-bottom: 1px solid #243049;
+    line-height: 1.4;
+  }
+  .suggestion:last-child { border-bottom: none; }
+  .suggestion:hover, .suggestion.highlighted { background: #0f3460; }
+  .suggestion .s-main { color: #fff; font-weight: 600; }
+  .suggestion .s-sub  { color: #8da; color: #8899bb; font-size: 0.76rem; margin-top: 1px; }
+  .suggestion .s-pin  { color: #e94560; margin-right: 6px; }
+  .suggestion-loading, .suggestion-empty {
+    padding: 9px 13px; font-size: 0.8rem; color: #888; font-style: italic;
+  }
+
+  #search-btn {
+    padding: 7px 14px;
+    background: #e94560; color: #fff;
+    border: none; border-radius: 6px;
+    cursor: pointer; font-size: 0.88rem; font-weight: 600;
+    transition: background 0.2s; white-space: nowrap; flex-shrink: 0;
+  }
+  #search-btn:hover:not(:disabled) { background: #c73652; }
+  #search-btn:disabled { background: #555; cursor: not-allowed; opacity: 0.6; }
+
+  #status-bar {
+    font-size: 0.73rem; color: #888;
+    padding: 5px 20px 6px;
+    background: #16213e; border-bottom: 1px solid #222;
+    flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  #map-wrapper { flex: 1; position: relative; overflow: hidden; }
+  #map { height: 100%; width: 100%; }
+
+  .legend {
+    background: rgba(22,33,62,0.95);
+    border: 1px solid #333; border-radius: 8px;
+    padding: 10px 12px; font-size: 0.78rem; line-height: 1.5;
+    min-width: 180px; max-width: 210px;
+  }
+  .legend h4 { margin-bottom: 6px; font-size: 0.85rem; color: #fff; border-bottom: 1px solid #444; padding-bottom: 5px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+
+  .leaflet-popup-content-wrapper { background: #16213e; color: #eee; border: 1px solid #444; border-radius: 8px; }
+  .leaflet-popup-tip { background: #16213e; }
+  .leaflet-popup-content { margin: 10px 14px; }
+  .popup-title { font-weight: 700; font-size: 0.95rem; margin-bottom: 4px; }
+  .popup-dist { font-size: 0.82rem; color: #f9a825; font-weight: 600; }
+  .popup-detail { font-size: 0.78rem; color: #bbb; margin-top: 4px; }
+  .popup-horn { font-size: 0.8rem; margin-top: 6px; }
+  .horn-yes   { color: #ef5350; font-weight: 700; }
+  .horn-maybe { color: #ffa726; font-weight: 700; }
+  .horn-no    { color: #66bb6a; font-weight: 700; }
+
+  #loading-overlay {
+    display: none; position: absolute; inset: 0;
+    background: rgba(15,15,30,0.82); z-index: 9999;
+    align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px;
+  }
+  #loading-overlay.active { display: flex; }
+  .spinner {
+    width: 44px; height: 44px;
+    border: 4px solid #333; border-top-color: #e94560;
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { font-size: 0.88rem; color: #bbb; }
+
+  #error-toast {
+    display: none; position: absolute;
+    bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #7f1d1d; border: 1px solid #ef5350; color: #fca5a5;
+    padding: 10px 20px; border-radius: 8px; z-index: 9999;
+    font-size: 0.85rem; max-width: 420px; text-align: center;
+  }
+
+  #mode-select {
+    padding: 7px 10px; border-radius: 6px;
+    background: #0f3460; color: #fff;
+    border: 1px solid #444; font-size: 0.85rem;
+    cursor: pointer; outline: none; flex-shrink: 0;
+    transition: border-color 0.2s;
+  }
+  #mode-select:focus { border-color: #e94560; }
+  #mode-select option { background: #0f3460; }
+
+  /* Google Maps-style satellite corner button */
+  #satellite-btn {
+    position: absolute; bottom: 28px; right: 10px; z-index: 1000;
+    width: 62px; border-radius: 6px; overflow: hidden; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.7); border: 2px solid rgba(255,255,255,0.25);
+    transition: border-color 0.2s, transform 0.1s;
+    user-select: none;
+  }
+  #satellite-btn:hover { border-color: rgba(255,255,255,0.7); transform: scale(1.04); }
+  #satellite-btn .sat-thumb {
+    width: 100%; height: 46px; display: flex; align-items: center;
+    justify-content: center; font-size: 22px;
+    background: linear-gradient(135deg, #1b3a5c 0%, #0d2137 100%);
+  }
+  #satellite-btn.active .sat-thumb {
+    background: linear-gradient(135deg, #3d6b45 0%, #2a4d30 100%);
+  }
+  #satellite-btn .sat-label {
+    text-align: center; font-size: 0.68rem; font-weight: 700;
+    padding: 3px 0; background: rgba(15,20,30,0.92); color: #dde;
+    letter-spacing: 0.02em;
+  }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <span style="font-size:1.3rem;flex-shrink:0">🔔</span>
+  <span id="header-title">Train Noise Map</span>
+  <form id="search-form" onsubmit="searchAddress(); return false;" autocomplete="off">
+    <div id="input-wrap">
+      <input id="address-input" type="text"
+        placeholder="Start typing a US address… suggestions will appear"
+        autocomplete="off"/>
+      <div id="suggestions"></div>
+    </div>
+    <select id="mode-select" onchange="onModeChange()">
+      <option value="train">🚂 Train Noise</option>
+      <option value="road">🌙 Nighttime Road Noise</option>
+    </select>
+    <button id="search-btn" type="submit">🔍 Search</button>
+  </form>
+</div>
+
+<div id="status-bar">Enter an address to discover nearby train crossings and noise zones</div>
+
+<div id="map-wrapper">
+  <div id="map"></div>
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loading-text">Searching…</div>
+  </div>
+  <div id="error-toast"></div>
+  <div id="satellite-btn">
+    <div class="sat-thumb">🛰️</div>
+    <div class="sat-label">Satellite</div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ── Map setup ────────────────────────────────────────────────
+const map = L.map('map', { zoomControl: true }).setView([37.566, -121.967], 13);
+const darkTile = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+  subdomains: 'abcd', maxZoom: 19
+});
+const satTile = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ',
+  maxZoom: 19
+});
+const satLabel = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 19, opacity: 0.85
+});
+let satMode = false;
+darkTile.addTo(map);
+
+function toggleSatellite() {
+  const btn = document.getElementById('satellite-btn');
+  if (satMode) {
+    map.removeLayer(satTile); map.removeLayer(satLabel);
+    darkTile.addTo(map);
+    btn.querySelector('.sat-thumb').textContent = '🛰️';
+    btn.querySelector('.sat-label').textContent = 'Satellite';
+    btn.classList.remove('active');
+  } else {
+    map.removeLayer(darkTile);
+    satTile.addTo(map); satLabel.addTo(map);
+    btn.querySelector('.sat-thumb').textContent = '🗺️';
+    btn.querySelector('.sat-label').textContent = 'Map';
+    btn.classList.add('active');
+  }
+  satMode = !satMode;
+}
+
+let dynamicLayers = L.layerGroup().addTo(map);
+let activeLegend = null, activeNotice = null;
+
+// ── Haversine distance (meters) ──────────────────────────────
+function haversine(lat1, lng1, lat2, lng2) {
+  const R = 6371000, toRad = x => x * Math.PI / 180;
+  const dLat = toRad(lat2-lat1), dLng = toRad(lng2-lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+const toMiles = m => (m / 1609.34).toFixed(2);
+
+// ── Horn assessment from OSM tags ────────────────────────────
+function hornAssess(tags) {
+  const barrier = (tags['crossing:barrier'] || tags['barrier'] || '').toLowerCase();
+  const access  = (tags['access'] || '').toLowerCase();
+  if (tags['quiet_zone'] === 'yes')
+    return { horn: 'no',    label: '🟢 Quiet Zone — horn suppressed', cls: 'horn-no'    };
+  if (access === 'private' || access === 'no')
+    return { horn: 'maybe', label: '⚠️ Horn unlikely — private crossing', cls: 'horn-maybe' };
+  if (['full','gates','full_barrier','half','half_barriers'].some(b => barrier.includes(b)))
+    return { horn: 'yes',   label: '🔔 Horn YES — gated public crossing', cls: 'horn-yes'  };
+  // open or unknown barrier on a public crossing = trains must horn by FRA rules
+  return { horn: 'yes', label: '🔔 Horn YES — open/public crossing', cls: 'horn-yes' };
+}
+
+function crossingColor(distM, horn) {
+  if (horn === 'no')   return '#66bb6a';
+  if (distM <  800)   return '#ef5350';   // < 0.5 mi  — very close
+  if (distM < 1609)   return '#ffa726';   // < 1 mi
+  if (distM < 2414)   return '#fff176';   // < 1.5 mi
+  return '#90a4ae';                        // > 1.5 mi
+}
+
+// ── Horn schedule profiles ───────────────────────────────────
+// 6 time slots: 10pm-2am, 2am-6am, 6am-10am, 10am-2pm, 2pm-6pm, 6pm-10pm
+// Level 0=none 1=low 2=moderate 3=high
+const SLOT_LABELS = ['10pm–2am','2am–6am','6am–10am','10am–2pm','2pm–6pm','6pm–10pm'];
+const SLOT_EMOJIS = ['🌙','🌃','🌅','☀️','🌆','🌇'];
+const SLOT_SHORT  = ['10p','2a','6a','10a','2p','6p'];
+const SCHED = {
+  freight:    [3, 3, 2, 2, 2, 2],  // 24/7; peaks late-night (off-peak ops)
+  commuter:   [1, 0, 3, 2, 3, 2],  // rush-hour peaks; near-silent 2-6am
+  amtrak:     [2, 2, 2, 2, 2, 2],  // even distribution; known for odd-hour passes
+  light_rail: [1, 0, 2, 2, 2, 2],  // limited late-night service
+  subway:     [1, 0, 2, 2, 2, 1],
+  tram:       [0, 0, 2, 2, 2, 1],
+};
+const LVL_COLOR = ['#333','#fff176','#ffa726','#ef5350'];
+const LVL_LABEL = ['None','Low','Moderate','High'];
+
+function detectProfiles(ways) {
+  const seen = new Set();
+  ways.forEach(w => {
+    const rt = (w.tags?.railway || 'rail').toLowerCase();
+    const op = (w.tags?.operator || w.tags?.name || w.tags?.network || '').toLowerCase();
+    if (rt === 'tram')       { seen.add('tram');       return; }
+    if (rt === 'subway')     { seen.add('subway');     return; }
+    if (rt === 'light_rail') { seen.add('light_rail'); return; }
+    if (/amtrak/.test(op))   { seen.add('amtrak');     return; }
+    if (/caltrain|metrolink|marc|nj.?transit|metra|septa|mbta|coaster|sounder|tri.?rail|sunrail|frontrunner|commuter/.test(op))
+                              { seen.add('commuter');  return; }
+    seen.add('freight');  // default: freight runs 24/7
+  });
+  return seen.size ? [...seen] : ['freight'];
+}
+
+function combineSlots(profileNames) {
+  return SLOT_LABELS.map((_, i) =>
+    Math.max(...profileNames.map(p => (SCHED[p] || SCHED.freight)[i]))
+  );
+}
+
+function scheduleBarHTML(slots, compact = false) {
+  const blocks = slots.map((lvl, i) => `
+    <div title="${SLOT_EMOJIS[i]} ${SLOT_LABELS[i]}: ${LVL_LABEL[lvl]}"
+      style="flex:1;background:${LVL_COLOR[lvl]};height:${compact?'14px':'18px'};
+      display:flex;align-items:center;justify-content:center;cursor:default;
+      font-size:0.52rem;color:${lvl>1?'#111':'#555'};font-weight:700">
+      ${compact ? '' : SLOT_SHORT[i]}
+    </div>`).join('');
+
+  const legend = [3,2,1,0].map(lvl =>
+    `<span style="font-size:0.65rem;color:${LVL_COLOR[lvl]};${lvl===0?'color:#555':''}">■ ${LVL_LABEL[lvl]}</span>`
+  ).join('&nbsp;&nbsp;');
+
+  return `
+    <div style="margin-top:${compact?'6':'8'}px">
+      <div style="font-size:0.7rem;color:#aaa;margin-bottom:3px;font-weight:600;letter-spacing:0.03em">
+        🕐 TYPICAL HORN TIMES
+      </div>
+      <div style="display:flex;gap:1px;border-radius:3px;overflow:hidden;border:1px solid #333">
+        ${blocks}
+      </div>
+      ${compact ? '' : `<div style="margin-top:3px;display:flex;gap:10px">${legend}</div>`}
+    </div>`;
+}
+
+// ── UI helpers ───────────────────────────────────────────────
+function setLoading(on, text = 'Loading…') {
+  document.getElementById('loading-text').textContent = text;
+  document.getElementById('loading-overlay').classList.toggle('active', on);
+}
+function setStatus(msg) { document.getElementById('status-bar').textContent = msg; }
+function showError(msg) {
+  const el = document.getElementById('error-toast');
+  el.textContent = msg; el.style.display = 'block';
+  setTimeout(() => (el.style.display = 'none'), 6000);
+}
+
+// ── Geocode via Nominatim ────────────────────────────────────
+// Common street-type abbreviations → full words for Nominatim
+const STREET_ABBREVS = [
+  [/\bct\b/gi,     'court'],
+  [/\bdr\b/gi,     'drive'],
+  [/\bln\b/gi,     'lane'],
+  [/\brd\b/gi,     'road'],
+  [/\bave?\b/gi,   'avenue'],
+  [/\bblvd\b/gi,   'boulevard'],
+  [/\bcir\b/gi,    'circle'],
+  [/\bpl\b/gi,     'place'],
+  [/\bpkwy\b/gi,   'parkway'],
+  [/\bhwy\b/gi,    'highway'],
+  [/\bfwy\b/gi,    'freeway'],
+  [/\bter(?:r)?\b/gi, 'terrace'],
+  [/\bst\b/gi,     'street'],   // last — ambiguous, try only if needed
+];
+
+function expandAbbreviations(addr) {
+  let out = addr;
+  for (const [re, full] of STREET_ABBREVS) out = out.replace(re, full);
+  return out;
+}
+
+// Strip unit/apt/suite designators from address for geocoding fallback
+function stripUnit(addr) {
+  return addr
+    .replace(/\b(unit|apt\.?|apartment|suite|ste\.?|#|bldg\.?|building|floor|fl\.?|rm\.?|room)\s*[a-z0-9-]+\b/gi, '')
+    .replace(/\s{2,}/g, ' ').trim().replace(/^,|,$/g, '').trim();
+}
+
+async function geocode(addr) {
+  // Build ordered list of variants to try: original → expanded → stripped → stripped+expanded
+  const variants = [addr];
+  const expanded = expandAbbreviations(addr);
+  if (expanded !== addr) variants.push(expanded);
+  const stripped = stripUnit(addr);
+  if (stripped !== addr) variants.push(stripped);
+  const strippedExp = expandAbbreviations(stripped);
+  if (strippedExp !== stripped && !variants.includes(strippedExp)) variants.push(strippedExp);
+
+  for (const query of variants) {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q=${encodeURIComponent(query)}`;
+    const r = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+    const d = await r.json();
+    if (d.length) return { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon), display: d[0].display_name };
+  }
+  throw new Error(`Address not found: "${addr}" — try adding city/state (e.g. "56 Hemlock Ct, Milpitas CA")`);
+}
+
+// ── Overpass API — fetch rail lines + crossings (with fallback mirrors) ──
+const OVERPASS_MIRRORS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+];
+
+function fetchWithTimeout(url, options, timeoutMs = 28000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Request timed out')), timeoutMs);
+    fetch(url, options)
+      .then(r => { clearTimeout(timer); resolve(r); })
+      .catch(e => { clearTimeout(timer); reject(e); });
+  });
+}
+
+async function fetchRail(lat, lng, rad = 3200) {
+  const q = `[out:json][timeout:25];(way["railway"~"^(rail|subway|light_rail|tram)$"](around:${rad},${lat},${lng});node["railway"~"^(level_crossing|crossing)$"](around:${rad},${lat},${lng}););out geom;`;
+  const opts = { method: 'POST', body: 'data=' + encodeURIComponent(q) };
+
+  let lastErr;
+  for (let i = 0; i < OVERPASS_MIRRORS.length; i++) {
+    const mirror = OVERPASS_MIRRORS[i];
+    try {
+      setLoading(true, `Querying railway data… (attempt ${i+1}/${OVERPASS_MIRRORS.length})`);
+      const r = await fetchWithTimeout(mirror, opts);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.json();
+    } catch (e) {
+      lastErr = e;
+      // try next mirror
+    }
+  }
+  throw new Error(`All Overpass servers unavailable: ${lastErr?.message || 'network error'}. Check your internet connection and try again.`);
+}
+
+// ── Road noise (night focus: 10pm–8am) ──────────────────────
+// API key is stored locally; this file is for personal use only
+const TOMTOM_KEY = 'WvdN60DiNleZkEZtcRT0V0DA9Vu9uQP4';
+
+const ROAD_BASE_DB = { motorway:70, motorway_link:67, trunk:66, primary:62, secondary:56, tertiary:50 };
+const ROAD_LANES_DEF = { motorway:4, motorway_link:2, trunk:4, primary:2, secondary:2, tertiary:1 };
+const ROAD_SPEED_DEF_KMH = { motorway:105, motorway_link:72, trunk:89, primary:64, secondary:56, tertiary:40 };
+const ROAD_COLOR = { motorway:'#ef5350', motorway_link:'#ef5350', trunk:'#ff7043', primary:'#ffa726', secondary:'#fff176', tertiary:'#80cbc4' };
+const ROAD_LABEL = { motorway:'Highway/Freeway', motorway_link:'On/Off Ramp', trunk:'Major Arterial', primary:'Primary Road', secondary:'Secondary Road', tertiary:'Local Road' };
+
+// Night activity slots [10pm-2am, 2am-6am, 6am-10am, 10am-2pm, 2pm-6pm, 6pm-10pm]
+// Night window (10pm-8am) = slots 0, 1, and first 2h of slot 2
+const ROAD_SCHED = {
+  motorway:      [3, 3, 3, 3, 3, 3],  // 24/7; trucks peak 2am-6am
+  motorway_link: [2, 2, 3, 3, 3, 2],
+  trunk:         [2, 2, 3, 3, 3, 2],
+  primary:       [2, 1, 3, 3, 3, 2],
+  secondary:     [1, 0, 2, 2, 2, 1],
+  tertiary:      [0, 0, 1, 2, 1, 1],
+};
+
+function parseSpeedKmh(val) {
+  if (!val) return null;
+  const s = String(val).toLowerCase().trim();
+  const m = s.match(/(\d+)/);
+  if (!m) return null;
+  const n = parseInt(m[1]);
+  if (s.includes('mph')) return Math.round(n * 1.609);
+  if (s.includes('knots')) return Math.round(n * 1.852);
+  return n; // assume km/h
+}
+
+// Closest geometry node to home
+function closestPointOnWay(lat, lng, geometry) {
+  if (!geometry?.length) return { lat, lng };
+  let best = geometry[0], bestDist = Infinity;
+  geometry.forEach(p => {
+    const d = haversine(lat, lng, p.lat, p.lon);
+    if (d < bestDist) { bestDist = d; best = p; }
+  });
+  return { lat: best.lat, lng: best.lon };
+}
+
+function minDistToWay(lat, lng, geometry) {
+  if (!geometry?.length) return Infinity;
+  return Math.min(...geometry.map(p => haversine(lat, lng, p.lat, p.lon)));
+}
+
+// Fetch TomTom Flow data (night speed proxy = freeFlowSpeed)
+// 5s timeout — if TomTom is blocked or slow, fall back gracefully
+async function fetchTomTomFlow(lat, lng) {
+  try {
+    const url = `https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?point=${lat},${lng}&key=${TOMTOM_KEY}`;
+    const r = await fetchWithTimeout(url, {}, 5000);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d.flowSegmentData || null;
+  } catch { return null; }
+}
+
+// Estimate outdoor dB at home at night (10pm-8am)
+// Uses TomTom freeFlowSpeed (night traffic runs at free flow)
+function roadNightDb(hw, tags, distM, flow) {
+  const base   = ROAD_BASE_DB[hw] || 55;
+  const lanes  = parseInt(tags.lanes) || ROAD_LANES_DEF[hw] || 2;
+
+  // Speed: TomTom freeFlowSpeed → OSM maxspeed → road-type default
+  const speedKmh = flow?.freeFlowSpeed
+    || parseSpeedKmh(tags.maxspeed)
+    || ROAD_SPEED_DEF_KMH[hw] || 60;
+
+  // Adjustments: speed ref = 96 km/h (60 mph)
+  const speedMod = (speedKmh - 96) / 16 * 2.0;
+  const laneMod  = Math.max(0, lanes - 2) * 1.5;
+  const surface  = (tags.surface || '').toLowerCase();
+  const surfMod  = surface.includes('concrete') ? 2 : surface.includes('cobble') ? 5 : 0;
+
+  // AADT mod if OSM has it
+  let aadtMod = 0;
+  if (tags.aadt) {
+    const ref = { motorway:80000, trunk:30000, primary:15000, secondary:5000, tertiary:2000 }[hw] || 5000;
+    aadtMod = 5 * Math.log10(Math.max(parseInt(tags.aadt), 100) / ref);
+  }
+
+  // Line-source attenuation: -10·log₁₀(d/25)  (~3 dB per doubling)
+  const distMod = -10 * Math.log10(Math.max(distM, 10) / 25);
+
+  return Math.round(base + speedMod + laneMod + surfMod + aadtMod + distMod);
+}
+
+function roadImpactLabel(db) {
+  if (db >= 60) return { label: '🔴 HIGH — significant sleep disruption risk',   cls: 'horn-yes',   color: '#ef5350' };
+  if (db >= 50) return { label: '🟠 MODERATE — may disturb light sleepers',       cls: 'horn-maybe', color: '#ffa726' };
+  if (db >= 40) return { label: '🟡 MILD — audible outdoors; most unaffected',    cls: '',           color: '#fff176' };
+  return                { label: '🟢 QUIET — minimal night noise impact',          cls: 'horn-no',    color: '#66bb6a' };
+}
+
+function roadNightBarHTML(hw) {
+  const slots = ROAD_SCHED[hw] || ROAD_SCHED.secondary;
+  const NIGHT = [true, true, true, false, false, false]; // slots 0-2 cover 10pm-10am
+  const blocks = slots.map((lvl, i) => `
+    <div title="${SLOT_EMOJIS[i]} ${SLOT_LABELS[i]}${NIGHT[i]?' 🌙':''}: ${LVL_LABEL[lvl]}"
+      style="flex:1;background:${LVL_COLOR[lvl]};height:16px;
+      display:flex;align-items:center;justify-content:center;
+      font-size:0.52rem;color:${lvl>1?'#111':'#555'};font-weight:700;
+      ${NIGHT[i]?'border-bottom:2px solid #42a5f5;':''}">
+      ${SLOT_SHORT[i]}
+    </div>`).join('');
+  return `
+    <div style="margin-top:6px">
+      <div style="font-size:0.7rem;color:#aaa;margin-bottom:2px;font-weight:600">🌙 TRAFFIC ACTIVITY</div>
+      <div style="display:flex;gap:1px;border-radius:3px;overflow:hidden;border:1px solid #333">${blocks}</div>
+      <div style="margin-top:2px;font-size:0.62rem;color:#42a5f5">
+        ▲ blue border = 10pm–10am window (10pm–8am focus)
+      </div>
+    </div>`;
+}
+
+async function fetchRoad(lat, lng, rad = 1600) {
+  const q = `[out:json][timeout:25];(way["highway"~"^(motorway|motorway_link|trunk|primary|secondary|tertiary)$"](around:${rad},${lat},${lng}););out geom tags;`;
+  const opts = { method: 'POST', body: 'data=' + encodeURIComponent(q) };
+  let lastErr;
+  for (let i = 0; i < OVERPASS_MIRRORS.length; i++) {
+    try {
+      setLoading(true, `Querying road data… (attempt ${i+1}/${OVERPASS_MIRRORS.length})`);
+      const r = await fetchWithTimeout(OVERPASS_MIRRORS[i], opts);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.json();
+    } catch (e) { lastErr = e; }
+  }
+  throw new Error(`All Overpass servers unavailable: ${lastErr?.message}`);
+}
+
+async function renderRoad(homeLat, homeLng, displayName, osm) {
+  dynamicLayers.clearLayers();
+  if (activeLegend) { activeLegend.remove(); activeLegend = null; }
+  if (activeNotice) { activeNotice.remove(); activeNotice = null; }
+
+  // Home marker
+  const homeIcon = L.divIcon({
+    className: '',
+    html: `<div style="width:28px;height:28px;border-radius:50%;background:#1565c0;border:3px solid #42a5f5;
+      display:flex;align-items:center;justify-content:center;font-size:14px;
+      box-shadow:0 0 12px rgba(66,165,245,0.7);">🏠</div>`,
+    iconSize: [28,28], iconAnchor: [14,14]
+  });
+  const shortAddr = displayName.split(',').slice(0,3).join(',');
+  L.marker([homeLat, homeLng], { icon: homeIcon })
+    .bindPopup(`<div class="popup-title">🏠 ${shortAddr}</div><div class="popup-detail">${displayName}</div>`)
+    .addTo(dynamicLayers);
+
+  const ways = osm.elements.filter(e => e.type === 'way');
+
+  // Sort by distance, enrich top 8 with TomTom traffic speed
+  let roads = ways.map(w => {
+    const hw   = w.tags?.highway || 'secondary';
+    const dist = minDistToWay(homeLat, homeLng, w.geometry);
+    const cp   = closestPointOnWay(homeLat, homeLng, w.geometry);
+    return { w, hw, dist, tags: w.tags || {}, cp };
+  }).sort((a,b) => a.dist - b.dist);
+
+  // Fetch TomTom flow for 8 closest (avoid rate-limit)
+  setLoading(true, 'Fetching TomTom traffic speed data…');
+  const top = roads.slice(0, 8);
+  const flows = await Promise.all(top.map(r => fetchTomTomFlow(r.cp.lat, r.cp.lng)));
+  top.forEach((r, i) => { r.flow = flows[i]; });
+  roads.slice(8).forEach(r => { r.flow = null; });
+
+  roads.forEach(r => {
+    r.db     = roadNightDb(r.hw, r.tags, r.dist, r.flow);
+    r.impact = roadImpactLabel(r.db);
+    r.col    = ROAD_COLOR[r.hw] || '#90a4ae';
+  });
+
+  // Draw road polylines
+  setLoading(true, 'Rendering Nighttime Road Noise map…');
+  roads.forEach(r => {
+    if (!r.w.geometry?.length) return;
+    const name     = r.tags.name || r.tags.ref || ROAD_LABEL[r.hw] || r.hw;
+    const lanes    = r.tags.lanes || ROAD_LANES_DEF[r.hw];
+    const speedDisp = r.flow?.freeFlowSpeed
+      ? `${r.flow.freeFlowSpeed} km/h (TomTom free-flow)`
+      : (r.tags.maxspeed || ROAD_SPEED_DEF_KMH[r.hw] + ' km/h (estimated)');
+    const aadt = r.tags.aadt
+      ? `${parseInt(r.tags.aadt).toLocaleString()} vehicles/day`
+      : 'Not in OSM (estimated from road type)';
+    const ttConf = r.flow?.confidence != null
+      ? `<div class="popup-detail"><b>TomTom confidence:</b> ${Math.round(r.flow.confidence*100)}%</div>`
+      : '<div class="popup-detail" style="color:#555">TomTom: no data for this segment</div>';
+
+    L.polyline(r.w.geometry.map(p => [p.lat, p.lon]), {
+      color: r.impact.color,   // colored by noise level, not road type
+      weight: r.hw === 'motorway' || r.hw === 'trunk' ? 5 : 3,
+      opacity: 0.85
+    }).bindPopup(`
+      <div class="popup-title">🚗 ${name}</div>
+      <div class="popup-detail" style="color:#999;font-style:italic">${ROAD_LABEL[r.hw] || r.hw}</div>
+      <div class="popup-detail"><b>Distance from home:</b> ${toMiles(r.dist)} mi</div>
+      <div class="popup-detail"><b>Lanes:</b> ${lanes} &nbsp;|&nbsp; <b>Night speed:</b> ${speedDisp}</div>
+      <div class="popup-detail"><b>Annual traffic:</b> ${aadt}</div>
+      ${ttConf}
+      <div class="popup-horn ${r.impact.cls}" style="margin-top:6px">
+        🌙 Night noise est. <b>~${r.db} dB</b> outdoor<br>${r.impact.label}
+      </div>
+      ${roadNightBarHTML(r.hw)}
+      <div class="popup-detail" style="margin-top:5px;color:#555;font-size:0.68rem">
+        dB = outdoor at home · WHO night limit 55 dB<br>
+        Speed from TomTom free-flow (night proxy).
+      </div>
+    `).addTo(dynamicLayers);
+  });
+
+  // Night noise summary panel
+  // Deduplicate by road name — OSM splits one road into many segments
+  const seenNames = new Set();
+  const uniqueRoads = [];
+  for (const r of roads) {
+    const key = (r.tags.name || r.tags.ref || r.hw).toLowerCase().trim();
+    if (!seenNames.has(key)) { seenNames.add(key); uniqueRoads.push(r); }
+  }
+
+  const worstRoad = uniqueRoads[0];
+  const worstDb   = worstRoad?.db ?? 0;
+  const overall   = roadImpactLabel(worstDb);
+
+  const noisyRows = uniqueRoads.filter(r => r.db >= 40).slice(0, 5).map(r => {
+    const nm  = (r.tags.name || r.tags.ref || ROAD_LABEL[r.hw] || r.hw).substring(0, 24);
+    const hasTomTom = !!r.flow?.freeFlowSpeed;
+    const srcTitle  = hasTomTom
+      ? `TomTom: ${r.flow.freeFlowSpeed} km/h free-flow`
+      : 'Speed estimated from road type';
+    return `<div style="display:flex;align-items:center;gap:5px;font-size:0.7rem;margin-bottom:2px">
+      <div style="width:9px;height:9px;border-radius:2px;background:${r.impact.color};flex-shrink:0"></div>
+      <span style="color:#ccc;flex:1">${nm}</span>
+      <span title="${srcTitle}" style="font-size:0.65rem">${hasTomTom ? '📡' : '📊'}</span>
+      <span style="color:${r.impact.color};font-weight:700">~${r.db}dB</span>
+    </div>`;
+  }).join('');
+
+  activeNotice = L.control({ position: 'topright' });
+  activeNotice.onAdd = () => {
+    const d = L.DomUtil.create('div', 'legend');
+    d.innerHTML = `
+      <h4 style="color:#42a5f5">🌙 Nighttime Road Noise</h4>
+      <div style="font-size:0.68rem;color:#aaa;margin-bottom:5px">10pm – 8am · outdoor at home</div>
+      <div class="popup-horn ${overall.cls}" style="font-size:0.75rem;padding:5px 8px;margin-bottom:8px">
+        <b>~${worstDb} dB</b> worst road<br>${overall.label.replace(/🔴|🟠|🟡|🟢/,'').trim()}
+      </div>
+      <div style="font-size:0.72rem;color:#aaa;margin-bottom:3px;font-weight:600">
+        TOP ROADS: <span style="color:#666;font-weight:400;font-size:0.65rem">📡 TomTom speed · 📊 estimated</span>
+      </div>
+      ${noisyRows || '<div style="color:#555;font-size:0.7rem">No major roads nearby</div>'}
+      <div style="margin-top:6px;border-top:1px solid #333;padding-top:5px;font-size:0.65rem;color:#555">
+        🔴 ≥60dB sleep risk &nbsp;🟠 50–59 moderate<br>
+        🟡 40–49 mild &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;🟢 &lt;40 quiet<br>
+        WHO outdoor night limit: 55 dB
+      </div>
+    `;
+    return d;
+  };
+  activeNotice.addTo(map);
+
+  // Road legend — single color scheme: noise level only
+  activeLegend = L.control({ position: 'bottomleft' });
+  activeLegend.onAdd = () => {
+    const d = L.DomUtil.create('div', 'legend');
+    d.innerHTML = `
+      <h4>🌙 Nighttime Road Noise</h4>
+      <div style="font-size:0.68rem;color:#aaa;margin-bottom:5px">Road color = noise at your home</div>
+      <div class="legend-item"><div style="width:22px;border-top:4px solid #ef5350;flex-shrink:0"></div> ≥60 dB — Sleep risk</div>
+      <div class="legend-item"><div style="width:22px;border-top:4px solid #ffa726;flex-shrink:0"></div> 50–59 dB — Moderate</div>
+      <div class="legend-item"><div style="width:22px;border-top:4px solid #fff176;flex-shrink:0"></div> 40–49 dB — Mild</div>
+      <div class="legend-item"><div style="width:22px;border-top:4px solid #66bb6a;flex-shrink:0"></div> &lt;40 dB — Quiet</div>
+      <div style="margin-top:5px;font-size:0.65rem;color:#555">
+        Thicker line = highway/arterial<br>
+        Speed: TomTom free-flow · 1 mi radius
+      </div>
+    `;
+    return d;
+  };
+  activeLegend.addTo(map);
+
+  const pts = [[homeLat, homeLng], ...roads.slice(0,5).map(r => r.w.geometry?.[0] ? [r.w.geometry[0].lat, r.w.geometry[0].lon] : null).filter(Boolean)];
+  map.fitBounds(pts.length > 1 ? pts : [[homeLat-.01,homeLng-.01],[homeLat+.01,homeLng+.01]],
+    { padding: [50,50], maxZoom: 15 });
+}
+
+function onModeChange() {
+  const mode = document.getElementById('mode-select').value;
+  document.getElementById('header-title').textContent = mode === 'road' ? 'Nighttime Road Noise' : 'Train Noise Map';
+  // Auto-reload if an address is already loaded
+  const addr = document.getElementById('address-input').value.trim();
+  if (addr) searchAddress();
+}
+
+
+function render(homeLat, homeLng, displayName, osm) {
+  dynamicLayers.clearLayers();
+  if (activeLegend) { activeLegend.remove(); activeLegend = null; }
+  if (activeNotice) { activeNotice.remove(); activeNotice = null; }
+
+  // Home marker
+  const homeIcon = L.divIcon({
+    className: '',
+    html: `<div style="width:28px;height:28px;border-radius:50%;background:#1565c0;border:3px solid #42a5f5;
+      display:flex;align-items:center;justify-content:center;font-size:14px;
+      box-shadow:0 0 12px rgba(66,165,245,0.7);">🏠</div>`,
+    iconSize: [28,28], iconAnchor: [14,14]
+  });
+  const shortAddr = displayName.split(',').slice(0,3).join(',');
+  L.marker([homeLat, homeLng], { icon: homeIcon })
+    .bindPopup(`<div class="popup-title">🏠 ${shortAddr}</div><div class="popup-detail">${displayName}</div>`)
+    .addTo(dynamicLayers);
+
+  const ways  = osm.elements.filter(e => e.type === 'way');
+  const nodes = osm.elements.filter(e => e.type === 'node');
+
+  // Schedule: detect rail types and build combined activity profile
+  const profileNames = detectProfiles(ways);
+  const schedSlots   = combineSlots(profileNames);
+
+  // Railway type → color
+  const railColor = { rail:'#ff7043', subway:'#ab47bc', light_rail:'#29b6f6', tram:'#ffca28' };
+
+  // Draw rail lines
+  ways.forEach(w => {
+    if (!w.geometry?.length) return;
+    const rt  = w.tags?.railway || 'rail';
+    const col = railColor[rt] || '#ff7043';
+    const name  = w.tags?.name || w.tags?.ref || (rt.replace('_',' ') + ' line');
+    const speed = w.tags?.maxspeed || w.tags?.['maxspeed:freight'] || '—';
+    L.polyline(w.geometry.map(p => [p.lat, p.lon]), { color: col, weight: 4, opacity: 0.85, dashArray: '8 4' })
+      .bindPopup(`<div class="popup-title">🚂 ${name}</div><div class="popup-detail">Type: ${rt.replace('_',' ')}<br>Max speed: ${speed}</div>`)
+      .addTo(dynamicLayers);
+  });
+
+  // Build & sort crossings by distance
+  const crossings = nodes.map(n => {
+    const tags = n.tags || {};
+    const dist = haversine(homeLat, homeLng, n.lat, n.lon);
+    const hi   = hornAssess(tags);
+    return { n, tags, dist, hi, col: crossingColor(dist, hi.horn) };
+  }).sort((a,b) => a.dist - b.dist);
+
+  // Distance rings + connector lines (closest 8 only to avoid clutter)
+  crossings.slice(0, 8).forEach(c => {
+    L.circle([homeLat, homeLng], {
+      radius: c.dist, color: c.col, weight: 1, opacity: 0.25, fillOpacity: 0.03, dashArray: '4 6'
+    }).addTo(dynamicLayers);
+    L.polyline([[homeLat, homeLng], [c.n.lat, c.n.lon]], {
+      color: c.col, weight: 1.5, opacity: 0.45, dashArray: '5 5'
+    }).addTo(dynamicLayers);
+  });
+
+  // Crossing markers
+  crossings.forEach(c => {
+    const label   = c.tags.name || c.tags.ref || c.tags['addr:street'] || 'Train Crossing';
+    const barrier = c.tags['crossing:barrier'] || c.tags.barrier || 'Unknown';
+    const access  = c.tags.access || 'public';
+    const rt      = (c.tags.railway || 'crossing').replace('_', ' ');
+
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="width:30px;height:30px;border-radius:50%;background:${c.col};border:2px solid #fff;
+        display:flex;align-items:center;justify-content:center;font-size:13px;
+        box-shadow:0 0 8px ${c.col}88;">🔔</div>`,
+      iconSize: [30,30], iconAnchor: [15,15]
+    });
+
+    L.marker([c.n.lat, c.n.lon], { icon })
+      .bindPopup(`
+        <div class="popup-title">${label}</div>
+        <div class="popup-dist">📍 ${toMiles(c.dist)} mi from home</div>
+        <div class="popup-detail" style="color:#999;font-style:italic">Type: ${rt}</div>
+        <div class="popup-detail"><b>Barrier:</b> ${barrier}</div>
+        <div class="popup-detail"><b>Access:</b> ${access}</div>
+        <div class="popup-horn ${c.hi.cls}">${c.hi.label}</div>
+        ${c.hi.horn !== 'no' ? scheduleBarHTML(schedSlots, false) : ''}
+        <div class="popup-detail" style="margin-top:4px;color:#555;font-size:0.7rem">OSM node ${c.n.id}</div>
+      `)
+      .addTo(dynamicLayers);
+  });
+
+  // Legend
+  activeLegend = L.control({ position: 'bottomleft' });
+  activeLegend.onAdd = () => {
+    const d = L.DomUtil.create('div', 'legend');
+    d.innerHTML = `
+      <h4>Legend</h4>
+      <div class="legend-item"><div class="dot" style="background:#42a5f5"></div> Home</div>
+      <div style="margin-top:6px;font-size:0.72rem;color:#aaa;font-weight:600">── TRACKS ──</div>
+      <div class="legend-item"><div style="width:22px;border-top:3px dashed #ff7043;flex-shrink:0"></div> Rail / Freight</div>
+      <div class="legend-item"><div style="width:22px;border-top:3px dashed #ab47bc;flex-shrink:0"></div> Subway</div>
+      <div class="legend-item"><div style="width:22px;border-top:3px dashed #29b6f6;flex-shrink:0"></div> Light Rail</div>
+      <div class="legend-item"><div style="width:22px;border-top:3px dashed #ffca28;flex-shrink:0"></div> Tram</div>
+      <div style="margin-top:6px;font-size:0.72rem;color:#aaa;font-weight:600">── CROSSINGS ──</div>
+      <div class="legend-item"><div class="dot" style="background:#ef5350"></div> Horn · &lt; 0.5 mi</div>
+      <div class="legend-item"><div class="dot" style="background:#ffa726"></div> Horn · 0.5 – 1 mi</div>
+      <div class="legend-item"><div class="dot" style="background:#fff176"></div> Horn · 1 – 1.5 mi</div>
+      <div class="legend-item"><div class="dot" style="background:#90a4ae"></div> Distant · &gt; 1.5 mi</div>
+      <div class="legend-item"><div class="dot" style="background:#66bb6a"></div> Quiet Zone</div>
+      <div style="margin-top:6px;font-size:0.68rem;color:#555">OSM / Overpass API · 2 mi radius</div>
+    `;
+    return d;
+  };
+  activeLegend.addTo(map);
+
+  // Noise summary (top-right)
+  const hornCount = crossings.filter(c => c.hi.horn === 'yes').length;
+  const nearest   = crossings[0];
+  const nearDist  = nearest ? toMiles(nearest.dist) + ' mi' : 'None';
+  const impact    = !nearest ? '🟢 None'
+                  : nearest.dist < 800  ? '🔴 HIGH'
+                  : nearest.dist < 1609 ? '🟡 MEDIUM' : '🟢 LOW';
+
+  activeNotice = L.control({ position: 'topright' });
+  activeNotice.onAdd = () => {
+    const d = L.DomUtil.create('div', 'legend');
+    const typeLabels = profileNames.map(p =>
+      p === 'light_rail' ? 'Light Rail' : p.charAt(0).toUpperCase() + p.slice(1)
+    ).join(', ');
+    d.innerHTML = `
+      <h4 style="color:#f9a825">🔔 Noise Summary</h4>
+      <div style="font-size:0.75rem;color:#ccc;max-width:185px;line-height:1.7">
+        <b>Rail lines:</b> ${ways.length}<br>
+        <b>Crossings:</b> ${crossings.length}<br>
+        <b>With horn:</b> ${hornCount}<br>
+        <b>Nearest:</b> ${nearDist}<br>
+        <b>Impact:</b> ${impact}<br>
+        <b>Rail type:</b> ${typeLabels}
+      </div>
+      ${scheduleBarHTML(schedSlots, true)}
+      <div style="margin-top:4px;display:flex;gap:8px;flex-wrap:wrap">
+        ${[3,2,1].map(lvl=>`<span style="font-size:0.65rem;color:${LVL_COLOR[lvl]}">■ ${LVL_LABEL[lvl]}</span>`).join('')}
+        <span style="font-size:0.65rem;color:#555">■ None</span>
+      </div>
+      <div style="margin-top:4px;font-size:0.65rem;color:#555">
+        ${SLOT_EMOJIS.map((e,i)=>`${e} ${SLOT_LABELS[i]}`).join('<br>')}
+      </div>
+      <div style="margin-top:4px;color:#555;font-size:0.65rem">Click markers for details</div>
+    `;
+    return d;
+  };
+  activeNotice.addTo(map);
+
+  // Fit view to results
+  const pts = [[homeLat, homeLng], ...crossings.slice(0,6).map(c => [c.n.lat, c.n.lon])];
+  ways.slice(0,3).forEach(w => w.geometry?.slice(0,8).forEach(p => pts.push([p.lat, p.lon])));
+  map.fitBounds(pts.length > 1 ? pts : [[homeLat-0.01, homeLng-0.01],[homeLat+0.01, homeLng+0.01]],
+    { padding: [50,50], maxZoom: 15 });
+}
+
+// ── Main search handler ──────────────────────────────────────
+let searchGen = 0;  // cancels stale in-flight searches
+
+async function searchAddress(preLoc) {
+  const myGen = ++searchGen;          // claim this generation
+  hideSuggestions();
+  const addr = preLoc ? preLoc.display : document.getElementById('address-input').value.trim();
+  if (!addr) return;
+
+  document.getElementById('search-btn').disabled = true;
+  try {
+    let loc = preLoc;
+    if (!loc) {
+      setLoading(true, 'Geocoding address…');
+      setStatus('Looking up address…');
+      loc = await geocode(addr);
+    }
+    if (myGen !== searchGen) return;  // superseded by newer search
+
+    setLoading(true, 'Querying OpenStreetMap…');
+    const mode = document.getElementById('mode-select').value;
+    const locShort = loc.display.split(',').slice(0,3).join(',');
+
+    if (mode === 'road') {
+      setStatus(`Found: ${locShort} — fetching road data (up to 3 servers)…`);
+      const osm = await fetchRoad(loc.lat, loc.lng);
+      if (myGen !== searchGen) return;
+      await renderRoad(loc.lat, loc.lng, loc.display, osm);
+      if (myGen !== searchGen) return;
+      const wc = osm.elements.filter(e => e.type==='way').length;
+      setStatus(`✅ ${locShort} — ${wc} road${wc!==1?'s':''} within 1 mi · night noise 10pm–8am`);
+      document.title = `Road Noise – ${addr}`;
+    } else {
+      setStatus(`Found: ${locShort} — fetching train data (up to 3 servers)…`);
+      const osm = await fetchRail(loc.lat, loc.lng);
+      if (myGen !== searchGen) return;
+      setLoading(true, 'Rendering map…');
+      render(loc.lat, loc.lng, loc.display, osm);
+      const wc = osm.elements.filter(e => e.type==='way').length;
+      const nc = osm.elements.filter(e => e.type==='node').length;
+      setStatus(`✅ ${locShort} — ${wc} rail line${wc!==1?'s':''} · ${nc} crossing${nc!==1?'s':''} within 2 mi`);
+      document.title = `Train Noise – ${addr}`;
+    }
+  } catch (err) {
+    if (myGen !== searchGen) return;
+    showError(err.message || 'Error. Please try again.');
+    setStatus('⚠️ ' + (err.message || 'Unknown error'));
+  } finally {
+    if (myGen === searchGen) {
+      setLoading(false);
+      document.getElementById('search-btn').disabled = false;
+    }
+  }
+}
+
+// ── Address autocomplete (Nominatim, debounced) ──────────────
+const input    = document.getElementById('address-input');
+const sugBox   = document.getElementById('suggestions');
+let sugItems   = [];          // current suggestion objects
+let highlightIx = -1;         // keyboard-highlighted index
+let debounceTimer = null;
+let suggestSeq = 0;           // guards against out-of-order responses
+
+function hideSuggestions() {
+  sugBox.classList.remove('active');
+  sugBox.innerHTML = '';
+  highlightIx = -1;
+}
+
+function renderSuggestions(items) {
+  sugItems = items;
+  highlightIx = -1;
+  if (!items.length) {
+    sugBox.innerHTML = '<div class="suggestion-empty">No matches found</div>';
+    sugBox.classList.add('active');
+    return;
+  }
+  sugBox.innerHTML = items.map((it, i) => {
+    const parts = it.display_name.split(',');
+    const main  = parts.slice(0, 2).join(',').trim();
+    const sub   = parts.slice(2).join(',').trim();
+    return `<div class="suggestion" data-ix="${i}">
+      <div class="s-main"><span class="s-pin">📍</span>${main}</div>
+      ${sub ? `<div class="s-sub">${sub}</div>` : ''}
+    </div>`;
+  }).join('');
+  sugBox.classList.add('active');
+
+  sugBox.querySelectorAll('.suggestion').forEach(el => {
+    el.addEventListener('mousedown', (e) => {     // mousedown fires before blur
+      e.preventDefault();
+      pickSuggestion(parseInt(el.dataset.ix, 10));
+    });
+  });
+}
+
+function pickSuggestion(ix) {
+  const it = sugItems[ix];
+  if (!it) return;
+  input.value = it.display_name;
+  hideSuggestions();
+  searchAddress({ lat: parseFloat(it.lat), lng: parseFloat(it.lon), display: it.display_name });
+}
+
+async function fetchSuggestions(q) {
+  const seq = ++suggestSeq;
+  sugBox.innerHTML = '<div class="suggestion-loading">Searching…</div>';
+  sugBox.classList.add('active');
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=0&limit=6&countrycodes=us&q=${encodeURIComponent(q)}`;
+    const r = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+    const d = await r.json();
+    if (seq !== suggestSeq) return;               // a newer query superseded this one
+    renderSuggestions(d);
+  } catch {
+    if (seq !== suggestSeq) return;
+    sugBox.innerHTML = '<div class="suggestion-empty">Suggestion lookup failed</div>';
+  }
+}
+
+input.addEventListener('input', () => {
+  const q = input.value.trim();
+  clearTimeout(debounceTimer);
+  if (q.length < 3) { hideSuggestions(); return; }
+  debounceTimer = setTimeout(() => fetchSuggestions(q), 350);
+});
+
+input.addEventListener('keydown', (e) => {
+  const items = sugBox.querySelectorAll('.suggestion');
+  if (!sugBox.classList.contains('active') || !items.length) return;
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    highlightIx = Math.min(highlightIx + 1, items.length - 1);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    highlightIx = Math.max(highlightIx - 1, 0);
+  } else if (e.key === 'Enter') {
+    if (highlightIx >= 0) { e.preventDefault(); pickSuggestion(highlightIx); }
+    return;
+  } else if (e.key === 'Escape') {
+    hideSuggestions();
+    return;
+  } else {
+    return;
+  }
+  items.forEach((el, i) => el.classList.toggle('highlighted', i === highlightIx));
+  if (items[highlightIx]) items[highlightIx].scrollIntoView({ block: 'nearest' });
+});
+
+input.addEventListener('blur', () => setTimeout(hideSuggestions, 150));
+input.addEventListener('focus', () => {
+  if (input.value.trim().length >= 3 && sugItems.length) sugBox.classList.add('active');
+});
+
+// ── Pre-load: URL param ?addr= (used by browser extension) or default ──
+const urlAddr = new URLSearchParams(window.location.search).get('addr');
+input.value = urlAddr || '38614 Royal Ann Cmn, Fremont CA 94536';
+
+// Attach mode-change listener in JS (not just HTML attr — survives cached HTML)
+const modeSelect = document.getElementById('mode-select');
+if (modeSelect) {
+  modeSelect.addEventListener('change', () => {
+    const mode = modeSelect.value;
+    document.getElementById('header-title').textContent =
+      mode === 'road' ? 'Nighttime Road Noise' : 'Train Noise Map';
+    const addr = input.value.trim();
+    if (addr) searchAddress();
+  });
+}
+
+// Satellite button — inline onclick blocked by MV3 CSP, attach here
+const satBtn = document.getElementById('satellite-btn');
+if (satBtn) satBtn.addEventListener('click', toggleSatellite);
+
+searchAddress();
+</script>
+</body>
+</html>

@@ -15,7 +15,7 @@ Built for use alongside [Redfin](https://www.redfin.com) listings, with a compan
 
 ## Live App
 
-👉 **https://wk19910201-rgb.github.io/train-noise-map/**
+👉 **https://wk19910201-rgb.github.io/train-noise-web/**
 
 ## Data Sources
 

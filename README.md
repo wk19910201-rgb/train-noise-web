@@ -11,7 +11,7 @@ Enter any US address and the app will show you:
 - **🌙 Nighttime road noise** — estimated noise levels from nearby roads during night hours
 - **🛰️ Satellite view** — toggle between dark map and satellite imagery
 
-Built for use alongside [Redfin](https://www.redfin.com) listings, with a companion [Chrome extension](https://github.com/wk19910201-rgb/train-noise-extension) that adds a one-click **Train Noise** button directly on Redfin property pages.
+Built for use alongside [Redfin](https://www.redfin.com) listings for train noise estimation. 
 
 ## Live App
 
